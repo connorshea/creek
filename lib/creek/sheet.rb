@@ -101,30 +101,48 @@ module Creek
         cell_type = nil
         cell_style_idx = nil
         @book.files.file.open(path) do |xml|
-          prefix = ''
+          namespace_resolved = false
           name_row = 'row'
           name_c = 'c'
           name_v = 'v'
           name_t = 't'
           Nokogiri::XML::Reader.from_io(xml).each do |node|
-            if prefix.empty? && node.namespaces.any?
+            # Resolve the namespace prefix once, from the first element that
+            # declares the spreadsheetml namespace (the worksheet root). Caching
+            # this avoids allocating a namespaces hash for every node in the stream.
+            if !namespace_resolved && node.namespaces.any?
               namespace = node.namespaces.detect { |_key, uri| uri == SPREADSHEETML_URI }
-              prefix = if namespace && namespace[0].start_with?('xmlns:')
-                         namespace[0].delete_prefix('xmlns:') + ':'
-                       else
-                         ''
-                       end
-              name_row = "#{prefix}row"
-              name_c = "#{prefix}c"
-              name_v = "#{prefix}v"
-              name_t = "#{prefix}t"
+              if namespace
+                prefix = namespace[0].start_with?('xmlns:') ? namespace[0].delete_prefix('xmlns:') + ':' : ''
+                name_row = "#{prefix}row"
+                name_c = "#{prefix}c"
+                name_v = "#{prefix}v"
+                name_t = "#{prefix}t"
+                namespace_resolved = true
+              end
             end
-            if node.name == name_row && node.node_type == opener
-              row = node.attributes
+
+            node_name = node.name
+            node_type = node.node_type
+
+            if node_type == opener && (node_name == name_v || node_name == name_t)
+              unless cell.nil?
+                node.read
+                cells[cell] = convert(node.value, cell_type, cell_style_idx)
+              end
+            elsif node_name == name_c && node_type == opener
+              # attribute_hash avoids the namespaces lookup + merge that
+              # Reader#attributes performs on every call; we only need t/s/r.
+              attributes     = node.attribute_hash
+              cell_type      = attributes['t']
+              cell_style_idx = attributes['s']
+              cell           = attributes['r']
+            elsif node_name == name_row && node_type == opener
+              row = node.attribute_hash
               row['cells'] = {}
               cells = {}
               y << (include_meta_data ? row : cells) if node.self_closing?
-            elsif node.name == name_row && node.node_type == closer
+            elsif node_name == name_row && node_type == closer
               processed_cells = fill_in_empty_cells(cells, row['r'], cell, use_simple_rows_format)
               @headers = processed_cells if with_headers && row['r'] == HEADERS_ROW_NUMBER
 
@@ -138,15 +156,6 @@ module Creek
 
               row['cells'] = processed_cells
               y << (include_meta_data ? row : processed_cells)
-            elsif node.name == name_c && node.node_type == opener
-              cell_type      = node.attributes['t']
-              cell_style_idx = node.attributes['s']
-              cell           = node.attributes['r']
-            elsif (node.name == name_v || node.name == name_t) && node.node_type == opener
-              unless cell.nil?
-                node.read
-                cells[cell] = convert(node.value, cell_type, cell_style_idx)
-              end
             end
           end
         end
@@ -172,8 +181,8 @@ module Creek
       new_cells = {}
       return new_cells if cells.empty?
 
-      last_col = last_col.gsub(row_number, '')
-      ('A'..last_col).to_a.each do |column|
+      last_col = last_col.delete_suffix(row_number)
+      ('A'..last_col).each do |column|
         id = cell_id(column, use_simple_rows_format, row_number)
         new_cells[id] = cells["#{column}#{row_number}"]
       end
