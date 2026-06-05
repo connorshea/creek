@@ -131,12 +131,13 @@ module Creek
                 cells[cell] = convert(node.value, cell_type, cell_style_idx)
               end
             elsif node_name == name_c && node_type == opener
-              # attribute_hash avoids the namespaces lookup + merge that
-              # Reader#attributes performs on every call; we only need t/s/r.
-              attributes     = node.attribute_hash
-              cell_type      = attributes['t']
-              cell_style_idx = attributes['s']
-              cell           = attributes['r']
+              # Fetch the three attributes individually rather than via
+              # attribute_hash/attributes: with hundreds of thousands of cells
+              # the per-cell Hash allocation dominates, so three cheap C lookups
+              # are both faster and leaner than building and indexing a hash.
+              cell_type      = node.attribute('t')
+              cell_style_idx = node.attribute('s')
+              cell           = node.attribute('r')
             elsif node_name == name_row && node_type == opener
               row = node.attribute_hash
               row['cells'] = {}
