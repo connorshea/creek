@@ -141,7 +141,7 @@ module Creek
               cell_style_idx = node.attribute('s')
               cell           = node.attribute('r')
             elsif node_name == name_row && node_type == opener
-              row = node.attribute_hash
+              row = include_meta_data ? node.attribute_hash : { 'r' => node.attribute('r') } # `attribute_hash` expands the row's whole subtree: prevent it as much as possible
               row['cells'] = {}
               cells = {}
               y << (include_meta_data ? row : cells) if node.self_closing?
