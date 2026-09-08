@@ -107,19 +107,21 @@ module Creek
           name_v = 'v'
           name_t = 't'
           Nokogiri::XML::Reader.from_io(xml).each do |node|
-            # Resolve the namespace prefix once, from the first element that
-            # declares the spreadsheetml namespace (the worksheet root). Caching
-            # this avoids allocating a namespaces hash for every node in the stream.
-            if !namespace_resolved && node.namespaces.any?
-              namespace = node.namespaces.detect { |_key, uri| uri == SPREADSHEETML_URI }
-              if namespace
-                prefix = namespace[0].start_with?('xmlns:') ? namespace[0].delete_prefix('xmlns:') + ':' : ''
-                name_row = "#{prefix}row"
-                name_c = "#{prefix}c"
-                name_v = "#{prefix}v"
-                name_t = "#{prefix}t"
-                namespace_resolved = true
-              end
+            # Resolve the namespace prefix once, from the first node in the spreadsheetml
+            # namespace (the worksheet root).
+            #
+            # `Reader#namespaces` is not used for this: it goes through `xmlTextReaderExpand`,
+            # which materialises the whole subtree under the current node. On the root element
+            # that subtree is the *entire* document, so a single call builds a DOM of the whole
+            # worksheet and the streaming parse is lost. `Reader#prefix` and `Reader#namespace_uri`
+            # read the current node only, and never expand.
+            if !namespace_resolved && node.namespace_uri == SPREADSHEETML_URI
+              prefix = node.prefix ? "#{node.prefix}:" : ''
+              name_row = "#{prefix}row"
+              name_c = "#{prefix}c"
+              name_v = "#{prefix}v"
+              name_t = "#{prefix}t"
+              namespace_resolved = true
             end
 
             node_name = node.name
@@ -139,7 +141,7 @@ module Creek
               cell_style_idx = node.attribute('s')
               cell           = node.attribute('r')
             elsif node_name == name_row && node_type == opener
-              row = node.attribute_hash
+              row = include_meta_data ? node.attribute_hash : { 'r' => node.attribute('r') } # `attribute_hash` expands the row's whole subtree: prevent it as much as possible
               row['cells'] = {}
               cells = {}
               y << (include_meta_data ? row : cells) if node.self_closing?
